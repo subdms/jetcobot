@@ -4,9 +4,10 @@ project(myCobotCppPrivate VERSION 0.1.0
     LANGUAGES CXX
 )
 
-if("$ENV{QTDIR}" STREQUAL "")
-    message(FATAL_ERROR "Please set env var QTDIR to Qt toolchain path")
-endif()
+# if("$ENV{QTDIR}" STREQUAL "")
+#     message(FATAL_ERROR "Please set env var QTDIR to Qt toolchain path")
+# endif()
+
 find_program(QT_QMAKE_EXECUTABLE
     NAMES qmake
     PATHS "$ENV{QTDIR}/bin"
@@ -221,8 +222,9 @@ target_compile_definitions(myCobotCpp
         ROBOT_MYCOBOT
         QT_DISABLE_DEPRECATED_BEFORE=0x060000
         QUERY_STATUS_INTERVAL=600
-        COMMAND_INTERVAL=100
+        COMMAND_INTERVAL=50
 )
+# COMMAND_INTERVAL=100
 target_compile_options(myCobotCpp PRIVATE
     -Wall
 )
@@ -287,3 +289,20 @@ install(
     BUNDLE
         DESTINATION ${INSTALL_BINDIR}
 )
+
+# =====================================================================
+# Uninstall Target 추가
+# =====================================================================
+# 이 부분은 'make uninstall' 명령어를 가능하게 해줍니다.
+# 주의: 이 기능은 'make install'을 한 번 실행한 후에만 정상적으로 동작합니다.
+# 'install_manifest.txt' 파일이 필요하기 때문입니다.
+
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake_uninstall.cmake"
+  IMMEDIATE @ONLY
+)
+
+add_custom_target(uninstall
+  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake_uninstall.cmake"
+  )

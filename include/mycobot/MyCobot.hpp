@@ -1,6 +1,6 @@
 /**
  * @file MyCobot.hpp
- * @brief C++ API for myCobot.
+ * @brief High-level C++ API for myCobot.
  *
  * @copyright Elephant Robotics
  */
@@ -9,124 +9,124 @@
 #define MYCOBOTCPP_MYCOBOT_MYCOBOT_HPP
 
 #include <array>
-#include <iostream>
+#include <vector>
+#include <map>
 #include <memory>
-#if defined WIN32
-#include <Windows.h>
-#else
-#include <unistd.h>
-#endif
+#include <stdexcept>
+#include <functional>
 #include "MyCobotExport.hpp"
 
-/**
- * @namespace mycobot
- * @brief Namespace where all myCobot related classes and types are defined.
- */
-namespace mycobot {
+namespace mycobot
+{
+    // --- 기본 타입 정의 ---
+    enum Axis : int
+    {
+        X = 1,
+        Y,
+        Z,
+        RX,
+        RY,
+        RZ
+    };
+    enum Joint : int
+    {
+        J1 = 1,
+        J2,
+        J3,
+        J4,
+        J5,
+        J6
+    };
+    constexpr const int Axes = 6;
+    constexpr const int Joints = 6;
+    using Coords = std::array<double, Axes>;
+    using Angles = std::array<double, Joints>;
+    using IntAngles = std::array<int, Joints>; // 실시간 데이터용 정수 배열
+    using Voltages = std::array<double, Joints>;
 
-enum Axis : int { X = 1, Y, Z, RX, RY, RZ };
-enum Joint : int { J1 = 1, J2, J3, J4, J5, J6 };
-constexpr const int Axes = 6;
-constexpr const int Joints = 6;
-using Coords = std::array<double, Axes>;
-using Angles = std::array<double, Joints>;
+    constexpr const int DefaultSpeed = 50;
 
-constexpr const int DefaultSpeed = 30;
+    class MYCOBOTCPP_API MyCobotException : public std::runtime_error
+    {
+    public:
+        using std::runtime_error::runtime_error;
+    };
 
-/**
- * @class MyCobot
- * @brief Main class that defines API for myCobot.
- */
-class MYCOBOTCPP_API MyCobot {
-public:
+    class MYCOBOTCPP_API CommandException : public MyCobotException
+    {
+    public:
+        // ★★★ 이 부분을 수정 또는 추가합니다. ★★★
+        // std::string을 받는 생성자를 명시적으로 정의
+        explicit CommandException(const std::string &message)
+            : MyCobotException(message) {}
+    };
+
+    class MYCOBOTCPP_API InitializationException : public MyCobotException
+    {
+    public:
+        // ★★★ 여기도 동일하게 수정 또는 추가합니다. ★★★
+        explicit InitializationException(const std::string &message)
+            : MyCobotException(message) {}
+    };
+
+    class MYCOBOTCPP_API StateCheckException : public MyCobotException
+    {
+    public:
+        // ★★★ 여기도 동일하게 수정 또는 추가합니다. ★★★
+        explicit StateCheckException(const std::string &message)
+            : MyCobotException(message) {}
+    };
+
     /**
-     * @brief Get singleton instance of MyCobot.
-     * 'I' stands for 'Instance'.
-     * @throws std::error_code if serial port cannot be opened
-     * @returns singleton instance of MyCobot object
+     * @class MyCobot
+     * @brief Main class that defines a high-level, easy-to-use API for myCobot.
      */
-    static MyCobot I();
-    /** Copy constructor */
-    MyCobot(const MyCobot&) = default;
-    /** Copy assignment operator */
-    MyCobot& operator=(const MyCobot&) = default;
-    /** Destructor */
-    virtual ~MyCobot() = default;
-    /** Move constructor */
-    MyCobot(MyCobot&&) = delete;
-    /** Move assignment operator */
-    MyCobot& operator=(MyCobot&&) = delete;
+    class MYCOBOTCPP_API MyCobot
+    {
+    public:
+        /**
+         * @brief Get singleton instance of MyCobot and initialize the connection.
+         */
+        static MyCobot I();
+        MyCobot() = default;
 
-    void PowerOn();
-    void PowerOff();
-    bool IsControllerConnected() const;
-    void StopRobot();
+        // --- 기본 제어 (명령 전송) ---
+        void PowerOn();
+        void PowerOff();
+        void StopRobot();
+        void SetFreshMode(int mode);
+        void InitialPose(int speed = DefaultSpeed);
+
+        // --- 위치/각도 제어 (명령 전송) ---
+        void WriteAngles(const Angles &angles, int speed = DefaultSpeed);
+        void WriteAngle(Joint joint, double value, int speed = DefaultSpeed);
+        void WriteCoords(const Coords &coords, int speed = DefaultSpeed, int mode = 0);
+        void WriteCoord(Axis axis, double value, int speed = DefaultSpeed);
+
+        void RequestCoords();
+        void RequestAngles();
+        void RequestSpeeds();
+        void RequestJointLoad(Joint joint);
+
+        // --- 캐시된 데이터 조회 (읽기) ---
+        Angles PeekAngles() const;
+        Coords PeekCoords() const;
+        IntAngles PeekSpeeds() const;
+        int PeekJointLoad(Joint joint) const;
+
+        // --- 그리퍼 제어 ---
+        void SetGriper(int open);
+
+    private:
+        std::shared_ptr<class MyCobotImpl> impl{};
+    };
+
+    // ★★★ 클래스 바깥, 네임스페이스 안에 이 함수 선언을 추가합니다. ★★★
     /**
-     * @brief Checks if robot is in given position.
-     *
-     * This function can be used to check if robot is at the
-     * given point at the moment or if robot has reached target
-     * point with this pseudo code:
-     * 
-     *     WriteCoords(coords)
-     *     while (IsMoving() && !IsInPosition(coords))
-     *         sleep(1)
-     *
-     * @param[in] coords The meaning depends on is_linear parameter:
-     *                   if is_linear is true, coords are cartesian coordinates
-     *                   of target point,
-     *                   if is_linear is false, coords are joint angles
-     *                   of target robot position.
-     * @param[in] is_linear defines meaning of coords parameter, if true --
-     *                      coords are cartesian coordinates, if false --
-     *                      coords are angles of robot joints.
-     * @returns true if robot is at coords point at the moment, false otherwise.
+     * @brief 지정된 시간(밀리초) 동안 Qt 이벤트 루프를 처리하며 대기합니다.
      */
-    bool IsInPosition(const Coords& coords, bool is_linear = true) const;
-    bool IsMoving() const;
-    int GetSpeed() const;
-    void SetSpeed(int percentage);
-    double GetJointMin(Joint joint) const;
-    double GetJointMax(Joint joint) const;
+    void MYCOBOTCPP_API wait(int milliseconds);
 
-    void SetFreeMoveMode(bool free_move = true);
-    bool IsFreeMoveMode() const;
+} // namespace mycobot
 
-    Angles GetAngles() const;
-    void WriteAngles(const Angles& angles, int speed = DefaultSpeed);
-    void WriteAngle(Joint joint, double value, int speed = DefaultSpeed);
-    Coords GetCoords() const;
-    void WriteCoords(const Coords& coords, int speed = DefaultSpeed);
-    void WriteCoord(Axis axis, double value, int speed = DefaultSpeed);
-
-    void JogCoord(Axis axis, int direction, int speed = DefaultSpeed);
-    void JogAngle(Joint joint, int direction, int speed = DefaultSpeed);
-    void JogCoordAbsolute(Axis axis, double value, int speed = DefaultSpeed);
-    void JogAngleAbsolute(Joint joint, double value, int speed = DefaultSpeed);
-    void JogCoordIncrement(Axis axis, double increment, int speed = DefaultSpeed);
-    void JogAngleIncrement(Joint joint, double increment, int speed = DefaultSpeed);
-
-    //io
-    int GetBasicIn(int pin_number) const;
-    void SetBasicOut(int pin_number, int pin_signal);
-    int GetDigitalIn(int pin_number) const;
-    void SetDigitalOut(int pin_number, int pin_signal);
-
-    //gripper
-    void SetGriper(int open);//����Ӧ��צ
-    void SetElectricGriper(int open);//�綯��צ
-    void SleepSecond(unsigned time);
-
-protected:
-    MyCobot() = default;
-private:
-    /**
-     * Private implementation detail.
-     *
-     * It allows for cheap copies of enclosing class and hides implementation details.
-     */
-    std::shared_ptr<class MyCobotImpl> impl{};
-};
-
-}
-#endif
+#endif // MYCOBOTCPP_MYCOBOT_MYCOBOT_HPP
