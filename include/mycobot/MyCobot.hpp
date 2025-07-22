@@ -42,14 +42,13 @@ namespace mycobot
     using Coords = std::array<double, Axes>;
     using Angles = std::array<double, Joints>;
     using IntAngles = std::array<int, Joints>; // 실시간 데이터용 정수 배열
-    using Voltages = std::array<double, Joints>;
 
     constexpr const int DefaultSpeed = 50;
 
     class MYCOBOTCPP_API MyCobotException : public std::runtime_error
     {
     public:
-        using std::runtime_error::runtime_error;
+        explicit MyCobotException(const std::string &message) : std::runtime_error(message) {}
     };
 
     class MYCOBOTCPP_API CommandException : public MyCobotException
@@ -69,14 +68,6 @@ namespace mycobot
             : MyCobotException(message) {}
     };
 
-    class MYCOBOTCPP_API StateCheckException : public MyCobotException
-    {
-    public:
-        // ★★★ 여기도 동일하게 수정 또는 추가합니다. ★★★
-        explicit StateCheckException(const std::string &message)
-            : MyCobotException(message) {}
-    };
-
     /**
      * @class MyCobot
      * @brief Main class that defines a high-level, easy-to-use API for myCobot.
@@ -87,8 +78,12 @@ namespace mycobot
         /**
          * @brief Get singleton instance of MyCobot and initialize the connection.
          */
-        static MyCobot I();
+        static MyCobot &I();
         MyCobot() = default;
+
+        // --- [수정 5] 자동 폴링 제어 함수 추가 ---
+        void startAutoPolling(int interval_ms = 50);
+        void stopAutoPolling();
 
         // --- 기본 제어 (명령 전송) ---
         void PowerOn();
@@ -101,18 +96,19 @@ namespace mycobot
         void WriteAngles(const Angles &angles, int speed = DefaultSpeed);
         void WriteAngle(Joint joint, double value, int speed = DefaultSpeed);
         void WriteCoords(const Coords &coords, int speed = DefaultSpeed, int mode = 0);
-        void WriteCoord(Axis axis, double value, int speed = DefaultSpeed);
 
         void RequestCoords();
         void RequestAngles();
         void RequestSpeeds();
         void RequestJointLoad(Joint joint);
+        void RequestIsMoving();
 
         // --- 캐시된 데이터 조회 (읽기) ---
         Angles PeekAngles() const;
         Coords PeekCoords() const;
         IntAngles PeekSpeeds() const;
         int PeekJointLoad(Joint joint) const;
+        bool PeekIsMoving() const;
 
         // --- 그리퍼 제어 ---
         void SetGriper(int open);

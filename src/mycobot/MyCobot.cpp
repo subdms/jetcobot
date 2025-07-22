@@ -3,6 +3,8 @@
 #include <system_error>
 #include <QCoreApplication>
 #include <QTime> // process_events_for 함수를 위해 포함
+#include <QEventLoop>
+#include <QTimer>
 
 // 저수준 API의 헤더 파일을 포함합니다.
 #include "MyCobot.hpp"
@@ -23,18 +25,17 @@ namespace mycobot
         if (milliseconds <= 0)
             return;
 
-        QTime dieTime = QTime::currentTime().addMSecs(milliseconds);
-        while (QTime::currentTime() < dieTime)
-        {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-        }
+        // QEventLoop와 QTimer를 사용하여, 기다리는 동안 CPU를 점유하지 않습니다.
+        QEventLoop loop;
+        QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+        loop.exec();
     }
 
     /**
      * @brief MyCobot 래퍼 클래스의 싱글톤 인스턴스를 가져옵니다.
      * 최초 호출 시, 저수준 rc::MyCobot API를 초기화하고 연결합니다.
      */
-    MyCobot MyCobot::I()
+    MyCobot &MyCobot::I()
     {
         static MyCobot singleton{};
         if (!singleton.impl)
@@ -68,6 +69,19 @@ namespace mycobot
     }
 
     // ==========================================================
+    // [수정 5] 자동 폴링 제어
+    // ==========================================================
+    void MyCobot::startAutoPolling(int interval_ms)
+    {
+        rc::MyCobot::Instance().startAutoPolling(interval_ms);
+    }
+
+    void MyCobot::stopAutoPolling()
+    {
+        rc::MyCobot::Instance().stopAutoPolling();
+    }
+
+    // ==========================================================
     // 기본 제어 (명령 전송)
     // ==========================================================
 
@@ -93,7 +107,7 @@ namespace mycobot
         }
         catch (const std::exception &e)
         {
-            throw CommandException("PowerOff (ReleaseAllServos) command failed: " + std::string(e.what()));
+            throw CommandException("PowerOff command failed: " + std::string(e.what()));
         }
     }
 
@@ -105,7 +119,7 @@ namespace mycobot
         }
         catch (const std::exception &e)
         {
-            throw CommandException("StopRobot (TaskStop) command failed: " + std::string(e.what()));
+            throw CommandException("StopRobot command failed: " + std::string(e.what()));
         }
     }
 
@@ -177,18 +191,6 @@ namespace mycobot
         }
     }
 
-    void MyCobot::WriteCoord(Axis axis, double value, int speed)
-    {
-        try
-        {
-            rc::MyCobot::Instance().WriteCoord(static_cast<rc::Axis>(axis), value, speed);
-        }
-        catch (const std::exception &e)
-        {
-            throw CommandException("WriteCoord command failed: " + std::string(e.what()));
-        }
-    }
-
     // ==========================================================
     // 실시간 데이터 요청 (비동기)
     // ==========================================================
@@ -197,7 +199,7 @@ namespace mycobot
     {
         try
         {
-            rc::MyCobot::Instance().RequestCoords();
+            rc::MyCobot::Instance().scheduleRequest(rc::RequestType::REQ_Coords);
         }
         catch (const std::exception &e)
         {
@@ -210,7 +212,7 @@ namespace mycobot
     {
         try
         {
-            rc::MyCobot::Instance().RequestAngles();
+            rc::MyCobot::Instance().scheduleRequest(rc::RequestType::REQ_Angles);
         }
         catch (const std::exception &e)
         {
@@ -223,7 +225,7 @@ namespace mycobot
     {
         try
         {
-            rc::MyCobot::Instance().RequestSpeeds();
+            rc::MyCobot::Instance().scheduleRequest(rc::RequestType::REQ_Speeds);
         }
         catch (const std::exception &e)
         {
@@ -235,11 +237,23 @@ namespace mycobot
     {
         try
         {
-            rc::MyCobot::Instance().RequestJointLoad(static_cast<rc::Joint>(joint));
+            rc::MyCobot::Instance().scheduleRequest(rc::RequestType::REQ_Loads, static_cast<rc::Joint>(joint));
         }
         catch (const std::exception &e)
         {
             throw CommandException("Request for load failed: " + std::string(e.what()));
+        }
+    }
+
+    void MyCobot::RequestIsMoving()
+    {
+        try
+        {
+            rc::MyCobot::Instance().scheduleRequest(rc::RequestType::REQ_IsMoving);
+        }
+        catch (const std::exception &e)
+        {
+            throw CommandException("Request for isMoving failed: " + std::string(e.what()));
         }
     }
 
@@ -267,32 +281,10 @@ namespace mycobot
         return rc::MyCobot::Instance().PeekJointLoad(static_cast<rc::Joint>(joint));
     }
 
-    // std::map<Joint, int> MyCobot::GetJointsLoads(const std::vector<Joint> &joints) const
-    // {
-    //     // 결과를 저장할 맵을 생성합니다.
-    //     std::map<Joint, int> loads_map;
-
-    //     try
-    //     {
-    //         // 사용자가 요청한 각 관절에 대해서만 순차적으로 부하를 읽어옵니다.
-    //         for (const Joint &joint : joints)
-    //         {
-    //             // ★★★ 더 추상화된 저수준 함수를 호출합니다. ★★★
-    //             int load_value = rc::MyCobot::Instance().GetJointLoad(
-    //                 static_cast<rc::Joint>(joint));
-
-    //             // 결과 맵에 저장합니다.
-    //             loads_map[joint] = load_value;
-    //         }
-    //     }
-    //     catch (const std::exception &e)
-    //     {
-    //         // 저수준 API에서 발생한 예외를 더 구체적인 정보와 함께 다시 던집니다.
-    //         throw StateCheckException("Failed to get joint loads: " + std::string(e.what()));
-    //     }
-
-    //     return loads_map;
-    // }
+    bool MyCobot::PeekIsMoving() const
+    {
+        return rc::MyCobot::Instance().PeekIsMoving();
+    }
 
     // ==========================================================
     // 그리퍼 제어

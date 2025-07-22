@@ -52,6 +52,10 @@ namespace rc
 
         connect(serial_port, &QSerialPort::readyRead, this, &MyCobot::HandleReadyRead);
         connect(serial_timer, &QTimer::timeout, this, &MyCobot::HandleTimeout);
+        // 시리얼 포트에서 에러가 발생하면 HandleError 슬롯을 호출하도록 연결합니다.
+        connect(serial_port, &QSerialPort::errorOccurred, this, &MyCobot::HandleError);
+        // ★★★ 자동 폴링 타이머의 timeout 시그널을 pollNextData 슬롯에 연결합니다. ★★★
+        connect(&m_polling_timer, &QTimer::timeout, this, &MyCobot::pollNextData);
     }
 
     MyCobot &MyCobot::Instance()
@@ -64,8 +68,8 @@ namespace rc
     {
         InitFirmata();
         Connect(); // 이제 Connect를 호출
-        RequestAngles();
-        RequestCoords();
+        // ★★★ 로봇을 기본적으로 '최신 명령 우선 모드'로 설정합니다. ★★★
+        SetFreshMode(1);
     }
 
     int MyCobot::Connect() // InitSerialPort -> Connect
@@ -121,6 +125,18 @@ namespace rc
         return serial_port->isOpen();
     }
 
+    void MyCobot::SetFreshMode(int mode)
+    {
+        // 명령어: [HEADER, HEADER, LEN(3), CMD(0x16), mode, FOOTER]
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(3)); // Length
+        command.append(char(Command::SetFreshMode));
+        command.append(char(mode));
+        command.append(FIRMATA_FOOTER);
+        SerialWrite(command);
+    }
+
     bool MyCobot::PowerOn()
     {
         // PowerOn 명령어(0x10) 패킷을 직접 생성합니다.
@@ -145,70 +161,89 @@ namespace rc
         return true;
     }
 
-    // 요청만 보내는 비동기 함수
-    void MyCobot::RequestVoltages()
+    int MyCobot::TaskStop()
     {
-        // 전압 요청 명령어(0xE3) 패킷을 생성하여 전송
+        LogTrace << ": TaskStop";
+
+        // TaskStop 명령어(0x29) 패킷을 직접 생성
+        // [HEADER, HEADER, LEN(3), CMD(0x29), FOOTER]
         QByteArray command;
         command.append(FIRMATA_HEADER);
-        command.append(char(2));                           // LEN
-        command.append(char(Command::GET_SERVO_VOLTAGES)); // 0xE3
+        command.append(char(2));                 // LEN
+        command.append(char(Command::TaskStop)); // 0x29
         command.append(FIRMATA_FOOTER);
 
-        // 직접 전송 (응답은 나중에 HandleReadyRead가 처리)
+        // 직접 전송
+        SerialWrite(command);
+
+        return 0;
+    }
+
+    int MyCobot::ProgramPause()
+    {
+        LogTrace;
+
+        // ProgramPause 명령어(0x26) 패킷을 직접 생성
+        // [HEADER, HEADER, LEN(3), CMD(0x26), FOOTER]
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(2));                     // LEN
+        command.append(char(Command::ProgramPause)); // 0x26
+        command.append(FIRMATA_FOOTER);
+
+        // 직접 전송
+        SerialWrite(command);
+        return 0;
+    }
+
+    int MyCobot::ProgramResume()
+    {
+        LogTrace;
+
+        // ProgramResume 명령어(0x28) 패킷을 직접 생성
+        // [HEADER, HEADER, LEN(3), CMD(0x28), FOOTER]
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(2));                      // LEN
+        command.append(char(Command::ProgramResume)); // 0x28
+        command.append(FIRMATA_FOOTER);
+
+        // 직접 전송
+        SerialWrite(command);
+        return 0;
+    }
+
+    void rc::MyCobot::ReleaseAllServos()
+    {
+        LogTrace;
+        // ReleaseAllServos 명령어(0x13) 패킷을 직접 생성
+        // [HEADER, HEADER, LEN(3), CMD(0x13), FOOTER]
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(2));                         // LEN 필드
+        command.append(char(Command::ReleaseAllServos)); // 0x13
+        command.append(FIRMATA_FOOTER);
+
+        // 직접 전송
         SerialWrite(command);
     }
 
-    void MyCobot::RequestAngles()
+    void MyCobot::SetSpeed(int percentage)
     {
-        SerialWrite(CommandGetAngles);
-    }
-
-    void MyCobot::RequestSpeeds()
-    {
+        // SetSpeed 명령어(0x41) 패킷을 직접 생성
+        // [HEADER, HEADER, LEN(4), CMD(0x41), PERCENT, FOOTER]
         QByteArray command;
         command.append(FIRMATA_HEADER);
-        command.append(char(2));
-        command.append(char(Command::GET_SERVO_SPEEDS));
-        command.append(FIRMATA_FOOTER);
-        SerialWrite(command);
-    }
+        command.append(char(3));                 // LEN 필드
+        command.append(char(Command::SetSpeed)); // 0x41
 
-    void MyCobot::RequestCoords()
-    {
-        // GetCoords 명령어(0x23)는 파라미터가 필요 없습니다.
-        // [HEADER, HEADER, LEN(3), CMD(0x23), FOOTER]
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(2));                  // LEN
-        command.append(char(Command::GetCoords)); // 0x23
+        // 속도(백분율) 값을 1바이트로 추가
+        command.append(static_cast<char>(percentage));
+
         command.append(FIRMATA_FOOTER);
 
-        // 직접 전송 (응답은 나중에 HandleReadyRead가 처리)
+        // 직접 전송
         SerialWrite(command);
-    }
-
-    // 저장된 값을 보기만 하는 함수
-    Angles MyCobot::PeekAngles() const
-    {
-        return cur_angles;
-    }
-
-    IntAngles MyCobot::PeekSpeeds() const
-    {
-        return real_cur_speeds;
-    }
-
-    Voltages MyCobot::PeekVoltages() const
-    {
-        // 로봇과 통신하지 않고, 현재 캐시된 값을 바로 반환
-        return real_cur_voltages;
-    }
-
-    Coords MyCobot::PeekCoords() const
-    {
-        // 뮤텍스 등으로 보호할 필요 없이, 현재 캐시된 값을 바로 반환
-        return cur_coords;
     }
 
     void MyCobot::WriteAngles(const Angles &angles, int speed)
@@ -341,6 +376,302 @@ namespace rc
         SerialWrite(command);
     }
 
+    void MyCobot::SetEncoders(const Angles &encoders, int speed)
+    {
+        // SetEncoders 명령어(0x3C) 패킷을 직접 생성
+        // [HEADER, HEADER, LEN, CMD(0x3C), E1, E2, E3, E4, E5, E6, SPEED, FOOTER]
+        // 데이터 길이: 엔코더(6*2=12) + 속도(1) = 13 바이트
+        // LEN 필드 값: 13(데이터) + 1(CMD) + 1(LEN) = 15
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(15));                   // LEN
+        command.append(char(Command::SetEncoders)); // 0x3C
+
+        // 6개 엔코더 값을 Big-Endian 2바이트로 변환하여 추가
+        for (const double &encoder_val : encoders)
+        {
+            signed short encoder = static_cast<signed short>(encoder_val);
+            command.append(static_cast<char>((encoder >> 8) & 0xFF));
+            command.append(static_cast<char>(encoder & 0xFF));
+        }
+
+        // 속도 추가
+        command.append(static_cast<char>(speed));
+        command.append(FIRMATA_FOOTER);
+
+        // 직접 전송
+        SerialWrite(command);
+        LogInfo << "SerialWrite SetEncoders";
+    }
+
+    void rc::MyCobot::SetEncoder(int joint, int val)
+    {
+        if (joint < 0 || joint >= rc::Joints)
+            return;
+
+        // SetEncoder 명령어(0x3A) 패킷을 직접 생성
+        // [HEADER, HEADER, LEN, CMD(0x3A), JOINT_ID, VALUE, FOOTER]
+        // 데이터 길이: 관절 ID(1) + 값(2) = 3 바이트
+        // LEN 필드 값: 3(데이터) + 1(CMD) + 1(LEN) = 5
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(5));                   // LEN
+        command.append(char(Command::SetEncoder)); // 0x3A
+
+        // 관절 ID 추가
+        command.append(static_cast<char>(joint));
+
+        // 엔코더 값을 Big-Endian 2바이트로 변환하여 추가
+        signed short encoder = static_cast<signed short>(val);
+        command.append(static_cast<char>((encoder >> 8) & 0xFF));
+        command.append(static_cast<char>(encoder & 0xFF));
+
+        command.append(FIRMATA_FOOTER);
+
+        // 직접 전송
+        SerialWrite(command);
+    }
+
+    int MyCobot::SetGriper(int open)
+    {
+        // 'open' 값에 따라 적절한 명령을 직접 전송
+        if (open == 1)
+        {
+            // 그리퍼 열기 명령 전송
+            SerialWrite(CommandSetGriperOpen); // CommandSetGriperOpen이 QByteArray로 정의되어 있다고 가정
+        }
+        else
+        {
+            // 그리퍼 닫기 명령 전송
+            SerialWrite(CommandSetGriperClose); // CommandSetGriperClose가 QByteArray로 정의되어 있다고 가정
+        }
+
+        return 0;
+    }
+
+    void MyCobot::startAutoPolling(int interval_ms)
+    {
+        if (!m_polling_timer.isActive())
+        {
+            m_polling_timer.start(interval_ms);
+            LogInfo << "Auto-polling started at " << interval_ms << "ms interval.";
+        }
+    }
+
+    /**
+     * @brief 데이터 자동 요청(폴링)을 중지합니다.
+     */
+    void MyCobot::stopAutoPolling()
+    {
+        m_polling_timer.stop();
+        LogInfo << "Auto-polling stopped.";
+    }
+
+    /**
+     * @brief [private slot] 자동 폴링 타이머에 의해 주기적으로 호출됩니다.
+     * 라운드 로빈 방식으로 여러 데이터를 순차적으로 요청하여 통신 과부하를 방지합니다.
+     */
+    void MyCobot::pollNextData()
+    {
+        // 요청 순서를 정하여 통신 과부하를 막습니다.
+        int request_type = m_polling_counter % 3; // 0, 1, 2 반복
+
+        switch (request_type)
+        {
+        case 0:
+            RequestIsMoving();
+            break;
+        case 1:
+            RequestSpeeds();
+            break;
+        case 2:
+            // 예시: J1 관절의 부하만 주기적으로 요청
+            RequestJointLoad(Joint::J1);
+            break;
+        case 3:
+            RequestAngles();
+            break;
+        default:
+            break;
+        }
+        m_polling_counter++;
+    }
+
+    /**
+     * @brief [최종] 데이터 요청을 스케줄러(큐)에 등록합니다. (비동기)
+     */
+    void MyCobot::scheduleRequest(RequestType request_type, Joint joint)
+    {
+        // 1. 요청을 대기열(큐)에 추가합니다.
+        m_request_queue.push({request_type, joint});
+
+        // 2. 지금 바로 다음 요청을 처리할 수 있는지 확인합니다.
+        processNextRequestInQueue();
+    }
+
+    /**
+     * @brief [private slot] 큐를 확인하고, 가능하면 다음 요청을 보냅니다.
+     */
+    void MyCobot::processNextRequestInQueue()
+    {
+        // 관제탑이 바쁘거나(다른 요청 처리 중) 대기 중인 요청이 없으면 아무것도 하지 않습니다.
+        if (m_scheduler_is_busy || m_request_queue.empty())
+        {
+            return;
+        }
+
+        // 관제탑을 '바쁨' 상태로 만들고, 큐에서 다음 요청을 꺼냅니다.
+        m_scheduler_is_busy = true;
+        auto request = m_request_queue.front();
+        m_request_queue.pop();
+
+        RequestType type = request.first;
+        Joint joint = request.second;
+
+        // 요청 타입에 따라 적절한 명령어를 로봇에게 보냅니다.
+        switch (type)
+        {
+        case RequestType::REQ_Angles:
+            RequestAngles(); // 내부적으로 SerialWrite(CommandGetAngles) 호출
+            break;
+        case RequestType::REQ_Speeds:
+            RequestSpeeds(); // 내부적으로 SerialWrite(...) 호출
+            break;
+        case RequestType::REQ_Loads:
+            RequestJointLoad(joint);
+            break;
+        case RequestType::REQ_Coords:
+            RequestCoords();
+            break;
+        case RequestType::REQ_IsMoving:
+            RequestIsMoving();
+            break;
+        case RequestType::REQ_Voltages:
+            RequestVoltages();
+            break;
+        default:
+            // 처리되지 않은 요청 타입에 대한 처리
+            m_scheduler_is_busy = false; // 스케줄러를 다시 활성화
+            break;
+        }
+    }
+
+    // 요청만 보내는 비동기 함수
+    void MyCobot::RequestVoltages()
+    {
+        // 전압 요청 명령어(0xE3) 패킷을 생성하여 전송
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(2));                           // LEN
+        command.append(char(Command::GET_SERVO_VOLTAGES)); // 0xE3
+        command.append(FIRMATA_FOOTER);
+
+        // 직접 전송 (응답은 나중에 HandleReadyRead가 처리)
+        SerialWrite(command);
+    }
+
+    void MyCobot::RequestAngles()
+    {
+        SerialWrite(CommandGetAngles);
+    }
+
+    void MyCobot::RequestSpeeds()
+    {
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(2));
+        command.append(char(Command::GET_SERVO_SPEEDS));
+        command.append(FIRMATA_FOOTER);
+        SerialWrite(command);
+    }
+
+    void MyCobot::RequestCoords()
+    {
+        // GetCoords 명령어(0x23)는 파라미터가 필요 없습니다.
+        // [HEADER, HEADER, LEN(3), CMD(0x23), FOOTER]
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(2));                  // LEN
+        command.append(char(Command::GetCoords)); // 0x23
+        command.append(FIRMATA_FOOTER);
+
+        // 직접 전송 (응답은 나중에 HandleReadyRead가 처리)
+        SerialWrite(command);
+    }
+
+    /**
+     * @brief [신규] 특정 관절의 부하 데이터 요청을 보냅니다. (비동기)
+     */
+    void MyCobot::RequestJointLoad(Joint joint)
+    {
+        // 다음에 올 응답이 어떤 관절의 것인지 기억해둡니다.
+        m_last_requested_load_joint = joint;
+
+        // GetServoData(0x53) 명령어를 2바이트 읽기 모드로 보냅니다.
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(5));
+        command.append(char(Command::GetServoData));
+        command.append(static_cast<char>(joint));
+        command.append(char(PRESENT_LOAD_ADDRESS));
+        command.append(static_cast<char>(1)); // 2바이트 읽기 모드
+        command.append(FIRMATA_FOOTER);
+        SerialWrite(command);
+    }
+
+    void MyCobot::RequestIsMoving()
+    {
+        // CheckRunning 명령어(0x2B) 패킷을 직접 생성하여 전송합니다.
+        // 데이터가 없으므로 길이는 2입니다.
+        QByteArray command;
+        command.append(FIRMATA_HEADER);
+        command.append(char(2));
+        command.append(char(Command::CheckRunning));
+        command.append(FIRMATA_FOOTER);
+        SerialWrite(command);
+    }
+
+    // 저장된 값을 보기만 하는 함수
+    Angles MyCobot::PeekAngles() const
+    {
+        return cur_angles;
+    }
+
+    IntAngles MyCobot::PeekSpeeds() const
+    {
+        return real_cur_speeds;
+    }
+
+    Voltages MyCobot::PeekVoltages() const
+    {
+        // 로봇과 통신하지 않고, 현재 캐시된 값을 바로 반환
+        return real_cur_voltages;
+    }
+
+    Coords MyCobot::PeekCoords() const
+    {
+        // 뮤텍스 등으로 보호할 필요 없이, 현재 캐시된 값을 바로 반환
+        return cur_coords;
+    }
+
+    /**
+     * @brief [신규] 특정 관절의 캐시된 부하 값을 조회합니다.
+     */
+    int MyCobot::PeekJointLoad(Joint joint) const
+    {
+        // 배열 인덱스는 0부터 시작하므로, joint ID에서 1을 빼줍니다.
+        if (joint >= J1 && joint <= J6)
+        {
+            return real_cur_loads[static_cast<int>(joint) - 1];
+        }
+        return -1; // 잘못된 관절 ID
+    }
+
+    bool MyCobot::PeekIsMoving() const
+    {
+        return robot_is_moving;
+    }
+
     double MyCobot::GetSpeed()
     {
         // 1. GetSpeed 명령어(0x40)를 직접 보냄
@@ -367,115 +698,6 @@ namespace rc
         // 3. HandleReadyRead에 의해 업데이트된 최신 속도 값을 반환
         return cur_speed;
     }
-
-    void MyCobot::SetSpeed(int percentage)
-    {
-        // SetSpeed 명령어(0x41) 패킷을 직접 생성
-        // [HEADER, HEADER, LEN(4), CMD(0x41), PERCENT, FOOTER]
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(3));                 // LEN 필드
-        command.append(char(Command::SetSpeed)); // 0x41
-
-        // 속도(백분율) 값을 1바이트로 추가
-        command.append(static_cast<char>(percentage));
-
-        command.append(FIRMATA_FOOTER);
-
-        // 직접 전송
-        SerialWrite(command);
-    }
-
-    bool MyCobot::StateCheck()
-    {
-        // 이 함수가 올바르게 동작하려면, IsPowerOn() 함수가
-        // 반드시 동기식(요청-대기-응답)으로 구현되어 최신 상태를 반환해야 합니다.
-#if defined ROBCTL_ATOMMAIN
-        return IsCncConnected() && IsPowerOn();
-#elif defined ROBCTL_PHOENIX
-        return IsCncConnected();
-#else
-        return false; // 기본적으로 false를 반환하도록 안전장치 추가
-#endif
-    }
-
-    int MyCobot::TaskStop()
-    {
-        LogTrace << ": TaskStop";
-
-        // TaskStop 명령어(0x29) 패킷을 직접 생성
-        // [HEADER, HEADER, LEN(3), CMD(0x29), FOOTER]
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(2));                 // LEN
-        command.append(char(Command::TaskStop)); // 0x29
-        command.append(FIRMATA_FOOTER);
-
-        // 직접 전송
-        SerialWrite(command);
-
-        return 0;
-    }
-
-    bool rc::MyCobot::CheckRunning()
-    {
-        // 응답 수신 여부를 확인하기 위한 플래그
-        bool response_received = false;
-
-        // 1. 전체 로직을 try-catch로 감쌉니다.
-        try
-        {
-            // CheckRunning 명령어(0x2B)를 직접 보냄
-            QByteArray command;
-            command.append(FIRMATA_HEADER);
-            command.append(char(3));                     // LEN: CMD(1) + 자기자신(1) = 2. -> 프로토콜에 따라 3
-            command.append(char(Command::CheckRunning)); // 0x2B
-            command.append(FIRMATA_FOOTER);
-            SerialWrite(command);
-
-            // 응답이 올 때까지 이벤트 루프를 돌며 대기
-            QEventLoop loop;
-            QTimer timer;
-            timer.setSingleShot(true);
-
-            // 람다를 사용하여 응답 수신 플래그를 설정
-            connect(this, &MyCobot::checkRunningReceived, &loop, [&]()
-                    {
-            response_received = true;
-            loop.quit(); });
-            connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
-
-            timer.start(SERIAL_TIMEOUT);
-            loop.exec();
-        }
-        // 2. SerialWrite에서 발생할 수 있는 예외를 잡습니다.
-        catch (const std::exception &e)
-        {
-            // 예외 메시지에 어떤 명령에서 실패했는지 명확한 맥락을 추가합니다.
-            throw std::runtime_error("Failed to send CheckRunning command: " + std::string(e.what()));
-        }
-
-        // 3. 타임아웃 발생 여부를 확인하고 예외를 던집니다.
-        if (!response_received)
-        {
-            throw std::runtime_error("Timeout: No response received for CheckRunning command.");
-        }
-
-        // 모든 과정이 성공했을 때만 HandleReadyRead에 의해 업데이트된 최신 값을 반환합니다.
-        return robot_is_moving;
-    }
-
-    bool MyCobot::IsInPositionEncoders(const Angles &encoders)
-    {
-        // GetEncoders()가 동기식으로 구현되어 있다는 전제 하에 호출
-        Angles currentEncoders = GetEncoders();
-        return rc::CoordsEqual(currentEncoders, encoders, EncodersEpsilon);
-    }
-
-#include <stdexcept> // std::runtime_error
-#include <string>    // std::string
-
-    // ...
 
     bool MyCobot::IsInPosition(const Coords &coords, bool is_linear)
     {
@@ -555,24 +777,6 @@ namespace rc
         return is_in_position;
     }
 
-    void MyCobot::FocusServo(Joint joint)
-    {
-        // FocusServo 명령어(0x57) 패킷을 직접 생성
-        // [HEADER, HEADER, LEN(4), CMD(0x57), JOINT_ID, FOOTER]
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(3));                   // LEN 필드
-        command.append(char(Command::FocusServo)); // 0x57
-
-        // 파라미터로 받은 관절 ID를 추가
-        command.append(static_cast<char>(joint));
-
-        command.append(FIRMATA_FOOTER);
-
-        // 직접 전송
-        SerialWrite(command);
-    }
-
     // ★★★ [추가] 헤더에 선언되었지만 구현이 누락되었던 함수를 추가합니다. ★★★
     // 이 함수는 '안전한 동기' 방식으로 동작하며, GetJointLoad에서 사용됩니다.
     int MyCobot::GetServoData(Joint joint, int data_id, int mode)
@@ -608,38 +812,6 @@ namespace rc
         loop.exec();
 
         return last_servo_data_value;
-    }
-
-    void rc::MyCobot::ReleaseAllServos()
-    {
-        LogTrace;
-        // ReleaseAllServos 명령어(0x13) 패킷을 직접 생성
-        // [HEADER, HEADER, LEN(3), CMD(0x13), FOOTER]
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(2));                         // LEN 필드
-        command.append(char(Command::ReleaseAllServos)); // 0x13
-        command.append(FIRMATA_FOOTER);
-
-        // 직접 전송
-        SerialWrite(command);
-    }
-
-    int MyCobot::ProgramPause()
-    {
-        LogTrace;
-
-        // ProgramPause 명령어(0x26) 패킷을 직접 생성
-        // [HEADER, HEADER, LEN(3), CMD(0x26), FOOTER]
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(2));                     // LEN
-        command.append(char(Command::ProgramPause)); // 0x26
-        command.append(FIRMATA_FOOTER);
-
-        // 직접 전송
-        SerialWrite(command);
-        return 0;
     }
 
     bool MyCobot::IsProgramPaused()
@@ -692,24 +864,7 @@ namespace rc
         return is_program_paused;
     }
 
-    int MyCobot::ProgramResume()
-    {
-        LogTrace;
-
-        // ProgramResume 명령어(0x28) 패킷을 직접 생성
-        // [HEADER, HEADER, LEN(3), CMD(0x28), FOOTER]
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(2));                      // LEN
-        command.append(char(Command::ProgramResume)); // 0x28
-        command.append(FIRMATA_FOOTER);
-
-        // 직접 전송
-        SerialWrite(command);
-        return 0;
-    }
-
-    bool rc::MyCobot::IsPowerOn()
+    bool MyCobot::IsPowerOn()
     {
         // 응답 수신 여부를 확인하기 위한 플래그
         bool response_received = false;
@@ -812,34 +967,6 @@ namespace rc
         return is_all_servo_enabled;
     }
 
-    void MyCobot::SetEncoders(const Angles &encoders, int speed)
-    {
-        // SetEncoders 명령어(0x3C) 패킷을 직접 생성
-        // [HEADER, HEADER, LEN, CMD(0x3C), E1, E2, E3, E4, E5, E6, SPEED, FOOTER]
-        // 데이터 길이: 엔코더(6*2=12) + 속도(1) = 13 바이트
-        // LEN 필드 값: 13(데이터) + 1(CMD) + 1(LEN) = 15
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(15));                   // LEN
-        command.append(char(Command::SetEncoders)); // 0x3C
-
-        // 6개 엔코더 값을 Big-Endian 2바이트로 변환하여 추가
-        for (const double &encoder_val : encoders)
-        {
-            signed short encoder = static_cast<signed short>(encoder_val);
-            command.append(static_cast<char>((encoder >> 8) & 0xFF));
-            command.append(static_cast<char>(encoder & 0xFF));
-        }
-
-        // 속도 추가
-        command.append(static_cast<char>(speed));
-        command.append(FIRMATA_FOOTER);
-
-        // 직접 전송
-        SerialWrite(command);
-        LogInfo << "SerialWrite SetEncoders";
-    }
-
     Angles rc::MyCobot::GetEncoders()
     {
         // 1. GetEncoders 명령어(0x3D)를 직접 보냄
@@ -863,51 +990,6 @@ namespace rc
 
         // 3. HandleReadyRead에 의해 업데이트된 최신 값을 반환
         return cur_encoders;
-    }
-
-    void rc::MyCobot::SetEncoder(int joint, int val)
-    {
-        if (joint < 0 || joint >= rc::Joints)
-            return;
-
-        // SetEncoder 명령어(0x3A) 패킷을 직접 생성
-        // [HEADER, HEADER, LEN, CMD(0x3A), JOINT_ID, VALUE, FOOTER]
-        // 데이터 길이: 관절 ID(1) + 값(2) = 3 바이트
-        // LEN 필드 값: 3(데이터) + 1(CMD) + 1(LEN) = 5
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(5));                   // LEN
-        command.append(char(Command::SetEncoder)); // 0x3A
-
-        // 관절 ID 추가
-        command.append(static_cast<char>(joint));
-
-        // 엔코더 값을 Big-Endian 2바이트로 변환하여 추가
-        signed short encoder = static_cast<signed short>(val);
-        command.append(static_cast<char>((encoder >> 8) & 0xFF));
-        command.append(static_cast<char>(encoder & 0xFF));
-
-        command.append(FIRMATA_FOOTER);
-
-        // 직접 전송
-        SerialWrite(command);
-    }
-
-    int MyCobot::SetGriper(int open)
-    {
-        // 'open' 값에 따라 적절한 명령을 직접 전송
-        if (open == 1)
-        {
-            // 그리퍼 열기 명령 전송
-            SerialWrite(CommandSetGriperOpen); // CommandSetGriperOpen이 QByteArray로 정의되어 있다고 가정
-        }
-        else
-        {
-            // 그리퍼 닫기 명령 전송
-            SerialWrite(CommandSetGriperClose); // CommandSetGriperClose가 QByteArray로 정의되어 있다고 가정
-        }
-
-        return 0;
     }
 
     void MyCobot::SerialWrite(const QByteArray &data) const
@@ -948,12 +1030,6 @@ namespace rc
         }
     }
 
-    int64_t MyCobot::GetCurrentTimeMs()
-    {
-        auto t = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-        return t.count();
-    }
-
     void MyCobot::ResetInPositionFlag()
     {
         // 이 함수는 새로운 움직임 명령이 시작될 때 호출됩니다.
@@ -961,39 +1037,6 @@ namespace rc
         is_in_position = false;
         // LogTrace는 디버깅 시에만 필요하므로, 제거하거나 그대로 둘 수 있습니다.
         // LogDebug << "Position state reset to 'not in position'.";
-    }
-
-    /**
-     * @brief [신규] 특정 관절의 부하 데이터 요청을 보냅니다. (비동기)
-     */
-    void MyCobot::RequestJointLoad(Joint joint)
-    {
-        // 다음에 올 응답이 어떤 관절의 것인지 기억해둡니다.
-        m_last_requested_load_joint = joint;
-
-        // GetServoData(0x53) 명령어를 2바이트 읽기 모드로 보냅니다.
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(5));
-        command.append(char(Command::GetServoData));
-        command.append(static_cast<char>(joint));
-        command.append(char(PRESENT_LOAD_ADDRESS));
-        command.append(static_cast<char>(1)); // 2바이트 읽기 모드
-        command.append(FIRMATA_FOOTER);
-        SerialWrite(command);
-    }
-
-    /**
-     * @brief [신규] 특정 관절의 캐시된 부하 값을 조회합니다.
-     */
-    int MyCobot::PeekJointLoad(Joint joint) const
-    {
-        // 배열 인덱스는 0부터 시작하므로, joint ID에서 1을 빼줍니다.
-        if (joint >= J1 && joint <= J6)
-        {
-            return real_cur_loads[static_cast<int>(joint) - 1];
-        }
-        return -1; // 잘못된 관절 ID
     }
 
     void rc::MyCobot::HandleReadyRead()
@@ -1082,7 +1125,7 @@ namespace rc
                         cur_angles[i] = static_cast<double>(decode_int16(content.second, i * 2)) / 100.0;
                     }
                 }
-                // emit anglesReceived(); // GetAngles()을 깨움
+                emit anglesReceived(); // GetAngles()을 깨움
                 break;
             }
             case Command::GetCoords:
@@ -1094,7 +1137,7 @@ namespace rc
                     for (size_t i = 3; i < rc::Axes; ++i)
                         cur_coords[i] = static_cast<double>(decode_int16(content.second, i * 2)) / 100.0;
                 }
-                // emit coordsReceived(); // GetCoords()가 동기식이면 필요
+                emit coordsReceived(); // GetCoords()가 동기식이면 필요
                 break;
             }
             case Command::GetEncoders:
@@ -1181,6 +1224,11 @@ namespace rc
             }
 #pragma GCC diagnostic pop
         }
+        // ★★★ "착륙 완료" 보고 ★★★
+        m_scheduler_is_busy = false;
+
+        // ★★★ 10ms의 안전 간격을 두고 다음 요청을 처리할지 확인합니다. ★★★
+        QTimer::singleShot(10, this, &MyCobot::processNextRequestInQueue);
     }
 
     void MyCobot::HandleTimeout()
@@ -1217,18 +1265,6 @@ namespace rc
         {
             LogError << "An unhandled serial port error occurred: " << error;
         }
-    }
-
-    void MyCobot::SetFreshMode(int mode)
-    {
-        // 명령어: [HEADER, HEADER, LEN(3), CMD(0x16), mode, FOOTER]
-        QByteArray command;
-        command.append(FIRMATA_HEADER);
-        command.append(char(3)); // Length
-        command.append(char(Command::SetFreshMode));
-        command.append(char(mode));
-        command.append(FIRMATA_FOOTER);
-        SerialWrite(command);
     }
 
     std::vector<std::pair<unsigned char, QByteArray>> MyCobot::Parse(QByteArray &data)
@@ -1319,5 +1355,53 @@ namespace rc
     //         commands.push_back(std::make_pair(Command::IsFreeMoveMode, f));
     //     }
     //     return is_free_move;
+    // }
+
+    // bool rc::MyCobot::CheckRunning()
+    // {
+    //     // 응답 수신 여부를 확인하기 위한 플래그
+    //     bool response_received = false;
+
+    //     // 1. 전체 로직을 try-catch로 감쌉니다.
+    //     try
+    //     {
+    //         // CheckRunning 명령어(0x2B)를 직접 보냄
+    //         QByteArray command;
+    //         command.append(FIRMATA_HEADER);
+    //         command.append(char(3));                     // LEN: CMD(1) + 자기자신(1) = 2. -> 프로토콜에 따라 3
+    //         command.append(char(Command::CheckRunning)); // 0x2B
+    //         command.append(FIRMATA_FOOTER);
+    //         SerialWrite(command);
+
+    //         // 응답이 올 때까지 이벤트 루프를 돌며 대기
+    //         QEventLoop loop;
+    //         QTimer timer;
+    //         timer.setSingleShot(true);
+
+    //         // 람다를 사용하여 응답 수신 플래그를 설정
+    //         connect(this, &MyCobot::checkRunningReceived, &loop, [&]()
+    //                 {
+    //         response_received = true;
+    //         loop.quit(); });
+    //         connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+
+    //         timer.start(SERIAL_TIMEOUT);
+    //         loop.exec();
+    //     }
+    //     // 2. SerialWrite에서 발생할 수 있는 예외를 잡습니다.
+    //     catch (const std::exception &e)
+    //     {
+    //         // 예외 메시지에 어떤 명령에서 실패했는지 명확한 맥락을 추가합니다.
+    //         throw std::runtime_error("Failed to send CheckRunning command: " + std::string(e.what()));
+    //     }
+
+    //     // 3. 타임아웃 발생 여부를 확인하고 예외를 던집니다.
+    //     if (!response_received)
+    //     {
+    //         throw std::runtime_error("Timeout: No response received for CheckRunning command.");
+    //     }
+
+    //     // 모든 과정이 성공했을 때만 HandleReadyRead에 의해 업데이트된 최신 값을 반환합니다.
+    //     return robot_is_moving;
     // }
 }
